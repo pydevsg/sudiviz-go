@@ -1,0 +1,54 @@
+# Build output
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test / coverage
+*.test
+*.out
+coverage.out
+coverage.html
+profile.cov
+
+# Go workspace (local only)
+go.work
+go.work.sum
+
+# CLI artefacts from local runs
+sudiviz.png
+sudiviz.svg
+sudiviz.json
+topology.png
+topology.svg
+topology.json
+baseline.json
+state.json
+*.tfstate
+*.tfstate.backup
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+sudiviz.yaml
+sudiviz.yml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Debug
+__debug_bin*
+debug
+.cursor/

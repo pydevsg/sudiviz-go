@@ -1,0 +1,62 @@
+version: 2
+
+project_name: sudiviz
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sudiviz
+    main: ./cmd/sudiviz
+    binary: sudiviz
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/pydevsg/sudiviz-go/internal/version.Version={{.Version}}
+
+  - id: sudiviz-mcp
+    main: ./cmd/sudiviz-mcp
+    binary: sudiviz-mcp
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/pydevsg/sudiviz-go/internal/version.Version={{.Version}}
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+brews:
+  - repository:
+      owner: pydevsg
+      name: homebrew-tap
+    homepage: https://github.com/pydevsg/sudiviz-go
+    description: X-ray vision for your cloud infrastructure.
+    license: GPL-3.0-or-later
+    install: |
+      bin.install "sudiviz"
+      bin.install "sudiviz-mcp"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

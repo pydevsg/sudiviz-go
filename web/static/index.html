@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>sudiviz — live topology</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- Cytoscape core + dagre layout (top-down hierarchical placement) -->
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">sudiviz</div>
+    <div class="meta">
+      <span id="meta-account">account: …</span>
+      <span id="meta-region">region: …</span>
+      <span id="meta-vpc">vpc: …</span>
+      <span id="meta-time">last update: …</span>
+    </div>
+    <div class="actions">
+      <label class="toggle"><input type="checkbox" id="autoRefresh" checked /> auto-refresh</label>
+      <button id="refreshBtn" title="Manual refresh">↻ refresh</button>
+      <button id="logsBtn" title="Open CloudWatch Logs">📜 Logs</button>
+      <button id="trafficBtn" title="Toggle traffic animation">▶ traffic</button>
+      <select id="heatmapSelect" title="Heatmap mode">
+        <option value="default">Color: Default</option>
+        <option value="health">Color: Health</option>
+        <option value="orphan">Color: Orphan Risk</option>
+        <option value="cost">Color: Cost ($)</option>
+        <option value="security">Color: Security</option>
+      </select>
+      <select id="regionSelect" title="Switch AWS region">
+        <option value="us-east-1">us-east-1</option>
+        <option value="us-east-2">us-east-2</option>
+        <option value="us-west-1">us-west-1</option>
+        <option value="us-west-2">us-west-2</option>
+        <option value="eu-west-1">eu-west-1</option>
+        <option value="eu-west-2">eu-west-2</option>
+        <option value="eu-central-1">eu-central-1</option>
+        <option value="ap-southeast-1">ap-southeast-1</option>
+        <option value="ap-northeast-1">ap-northeast-1</option>
+      </select>
+      <button id="sgFlowBtn" title="Toggle SG flow edges">🔒 SG</button>
+      <button id="orphansBtn" title="Toggle orphans only">⚠ orphans</button>
+      <button id="clusterBtn" title="Toggle cluster grouping">⊞ cluster</button>
+      <button id="themeBtn" title="Toggle dark/light theme">🌙</button>
+    </div>
+  </header>
+
+  <main id="layout">
+    <section id="cy"></section>
+    <div id="empty-state" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;">
+      <div style="font-size:3rem;margin-bottom:12px">☁️</div>
+      <div style="font-size:1.1rem;font-weight:600;color:#6b7280" id="empty-state-msg">No resources found in this region.</div>
+      <div style="font-size:0.85rem;color:#9ca3af;margin-top:6px">Switch region or deploy resources to see the topology.</div>
+    </div>
+    <canvas id="traffic-canvas"></canvas>
+
+    <aside id="sidebar">
+      <button id="sidebar-toggle" title="Toggle panel">‹</button>
+      <div class="panel" id="legend">
+        <h3>Legend</h3>
+        <div id="legend-default">
+          <h4 style="margin:6px 0 2px;font-size:0.75em;color:#6b7280">Health</h4>
+          <ul>
+            <li><span class="dot healthy"></span> Healthy</li>
+            <li><span class="dot warning"></span> Warning / Initial</li>
+            <li><span class="dot unhealthy"></span> Unhealthy</li>
+            <li><span class="dot unreachable"></span> Unknown / Unreachable</li>
+            <li><span class="dot orphan"></span> Orphan (red dashed)</li>
+          </ul>
+          <h4 style="margin:6px 0 2px;font-size:0.75em;color:#6b7280">Node types</h4>
+          <ul style="font-size:0.8em;list-style:none;padding:0">
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/eks_cluster.svg"> EKS Cluster</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/eks_nodegroup.svg"> EKS Node Group</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/ecs_cluster.svg"> ECS Cluster</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/ecs_service.svg"> ECS Service</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/alb.svg"> ALB / NLB</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/target_group.svg"> Target Group</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/instance.svg"> EC2 Instance</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/security_group.svg"> Security Group</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/lambda.svg"> Lambda</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/rds.svg"> RDS</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/aurora.svg"> Aurora</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/s3.svg"> S3</li>
+            <li style="display:flex;align-items:center;gap:5px;margin:3px 0"><img width="18" height="18" src="/static/icons/vpc.svg"> VPC</li>
+          </ul>
+        </div>
+        <div id="legend-health" style="display:none">
+          <h4 style="margin:6px 0 2px;font-size:0.75em;color:#6b7280">Health Heatmap</h4>
+          <ul>
+            <li><span class="dot" style="background:#dcfce7;border:2px solid #22c55e"></span> Healthy</li>
+            <li><span class="dot" style="background:#fef3c7;border:2px solid #eab308"></span> Warning / Initial</li>
+            <li><span class="dot" style="background:#fee2e2;border:2px solid #ef4444"></span> Unhealthy</li>
+            <li><span class="dot" style="background:#f3f4f6;border:2px solid #6b7280"></span> Unknown</li>
+          </ul>
+        </div>
+        <div id="legend-orphan" style="display:none">
+          <h4 style="margin:6px 0 2px;font-size:0.75em;color:#6b7280">Orphan Risk Heatmap</h4>
+          <ul>
+            <li><span class="dot" style="background:#dcfce7;border:2px solid #22c55e"></span> Connected (Safe)</li>
+            <li><span class="dot" style="background:#fee2e2;border:2px solid #dc2626"></span> Orphan (At Risk)</li>
+          </ul>
+        </div>
+        <div id="legend-cost" style="display:none">
+          <h4 style="margin:6px 0 2px;font-size:0.75em;color:#6b7280">Cost Heatmap ($/month)</h4>
+          <ul>
+            <li><span class="dot" style="background:#dcfce7;border:2px solid #22c55e"></span> Free / $0</li>
+            <li><span class="dot" style="background:#fef3c7;border:2px solid #eab308"></span> Low ($1-$50)</li>
+            <li><span class="dot" style="background:#fed7aa;border:2px solid #f97316"></span> Medium ($50-$200)</li>
+            <li><span class="dot" style="background:#fee2e2;border:2px solid #ef4444"></span> High ($200+)</li>
+          </ul>
+          <p id="total-cost" style="font-size:0.85em;font-weight:600;margin-top:8px;color:var(--text)"></p>
+        </div>
+        <p style="font-size:0.75em;color:#6b7280;margin-top:4px">Ctrl+click a node to open AWS Console</p>
+      </div>
+
+      <div class="panel" id="details">
+        <h3>Selection</h3>
+        <p class="hint">Click a node to inspect.</p>
+      </div>
+
+      <div class="panel" id="fixes">
+        <h3>Fix suggestions</h3>
+        <ul id="fix-list"><li class="hint">Loading…</li></ul>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // ------------------------------------------------------------------
+    // sudiviz — live web visualization
+    //
+    // Pulls graph JSON from the FastAPI backend, renders it with Cytoscape,
+    // and subscribes to a WebSocket stream that pushes diffs in real time.
+    //
+    // Cytoscape stylesheet selectors live in style.css for visual tweaks;
+    // edge orphan styling is applied via inline `style` from the backend so
+    // it is impossible to override accidentally.
+    // ------------------------------------------------------------------
+    cytoscape.use(cytoscapeDagre);
+
+    let cy;
+    let lastGraph = null;
+    let ws = null;
+    let orphanMode = false;
+
+    function buildCy(elements) {
+      cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: [...elements.nodes, ...elements.edges],
+        wheelSensitivity: 0.2,
+        layout: {
+          name: 'dagre',
+          rankDir: 'LR',
+          nodeSep: 60,
+          rankSep: 120,
+        },
+        style: [
+          {
+            selector: 'node',
+            style: {
+              'label': 'data(label)',
+              'text-valign': 'bottom',
+              'text-halign': 'center',
+              'text-margin-y': 4,
+              'background-color': '#fff',
+              'border-width': 2,
+              'border-color': '#374151',
+              'color': '#111827',
+              'font-size': 11,
+              'font-weight': 'bold',
+              'text-wrap': 'wrap',
+              'text-max-width': 120,
+              'shape': 'round-rectangle',
+              'width': 70,
+              'height': 70,
+              'background-fit': 'cover',
+              'background-clip': 'node',
+              'background-image-opacity': 1,
+              'background-width': '100%',
+              'background-height': '100%',
+              'background-position-x': '50%',
+              'background-position-y': '50%',
+            }
+          },
+          { selector: 'node.alb',           style: { 'background-image': "/static/icons/alb.svg" }},
+          { selector: 'node.target_group',  style: { 'background-image': "/static/icons/target_group.svg" }},
+          { selector: 'node.instance',      style: { 'background-image': "/static/icons/instance.svg" }},
+          { selector: 'node.security_group',style: { 'background-image': "/static/icons/security_group.svg" }},
+          { selector: 'node.vpc',           style: { 'background-image': "/static/icons/vpc.svg" }},
+          { selector: 'node.ecs_cluster',   style: { 'background-image': "/static/icons/ecs_cluster.svg" }},
+          { selector: 'node.ecs_service',   style: { 'background-image': "/static/icons/ecs_service.svg" }},
+          { selector: 'node.eks_cluster',   style: { 'background-image': "/static/icons/eks_cluster.svg" }},
+          { selector: 'node.eks_nodegroup', style: { 'background-image': "/static/icons/eks_nodegroup.svg" }},
+          { selector: 'node.rds',           style: { 'background-image': "/static/icons/rds.svg" }},
+          { selector: 'node.aurora',        style: { 'background-image': "/static/icons/aurora.svg" }},
+          { selector: 'node.lambda',        style: { 'background-image': "/static/icons/lambda.svg" }},
+          { selector: 'node.s3',            style: { 'background-image': "/static/icons/s3.svg" }},
+          { selector: 'node.healthy',        style: { 'border-color': '#22c55e' } },
+          { selector: 'node.unhealthy',      style: { 'border-color': '#ef4444' } },
+          { selector: 'node.warning, node.initial, node.draining', style: { 'border-color': '#eab308' } },
+          { selector: 'node.unknown, node.unused', style: { 'border-color': '#6b7280' } },
+          {
+            selector: 'node.orphan',
+            style: {
+              'border-color': '#dc2626',
+              'border-style': 'dashed',
+              'border-width': 3,
+              'background-color': '#fee2e2',
+            }
+          },
+          {
+            selector: 'edge',
+            style: {
+              'curve-style': 'bezier',
+              'target-arrow-shape': 'triangle',
+              'width': 2,
+              'line-color': '#9ca3af',
+              'target-arrow-color': '#9ca3af',
+              'label': 'data(relation)',
+              'font-size': 9,
+              'color': '#6b7280',
+              'text-background-color': '#ffffff',
+              'text-background-opacity': 0.8,
+              'text-background-padding': 1,
+            }
+          },
+          // Orphan edges: pulse + dashed red. Animation handled in CSS via .orphan class.
+          {
+            selector: 'edge.orphan',
+            style: {
+              'line-style': 'dashed',
+              'line-color': '#dc2626',
+              'target-arrow-color': '#dc2626',
+              'width': 3,
+            }
+          },
+          {
+            selector: 'node:selected',
+            style: { 'border-width': 4, 'border-color': '#2563eb' }
+          },
+        ],
+      });
+
+      cy.on('tap', 'node', evt => showDetails(evt.target.data()));
+      cy.on('tap', 'node', evt => {
+        const url = evt.target.data('console_url');
+        if (url && (evt.originalEvent.metaKey || evt.originalEvent.ctrlKey)) {
+          window.open(url, '_blank');
+        }
+      });
+    }
+
+    function applyOrphanFilter() {
+      if (!cy) return;
+      cy.elements().removeClass('hidden');
+      if (orphanMode) {
+        cy.elements().not('.orphan').addClass('hidden');
+      }
+    }
+
+    function showDetails(d) {
+      const el = document.getElementById('details');
+      const meta = d.metadata || {};
+
+      // Build kind-specific extra rows.
+      let extra = '';
+      switch (d.kind) {
+        case 'alb':
+          extra += row('DNS', meta.dns_name);
+          extra += row('Scheme', meta.scheme);
+          extra += row('Type', meta.type);
+          extra += row('State', meta.state);
+          extra += row('VPC', meta.vpc_id);
+          break;
+        case 'target_group':
+          extra += row('Protocol', meta.protocol);
+          extra += row('Port', meta.port);
+          extra += row('Targets', `${meta.targets ? meta.targets.length : 0} registered`);
+          extra += row('VPC', meta.vpc_id);
+          break;
+        case 'instance':
+          extra += row('Type', meta.instance_type);
+          extra += row('State', meta.state);
+          extra += row('Private IP', meta.private_ip);
+          extra += row('Public IP', meta.public_ip);
+          extra += row('VPC', meta.vpc_id);
+          extra += row('Subnet', meta.subnet_id);
+          break;
+        case 'security_group':
+          extra += row('Rules', `${meta.rules ? meta.rules.length : 0} rules`);
+          extra += row('VPC', meta.vpc_id);
+          break;
+        case 'ecs_cluster':
+          extra += row('Status', meta.status);
+          extra += row('Active services', meta.active_services_count);
+          extra += row('Running tasks', meta.running_tasks_count);
+          extra += row('Pending tasks', meta.pending_tasks_count);
+          extra += row('Capacity providers', (meta.capacity_providers || []).join(', ') || '—');
+          break;
+        case 'ecs_service':
+          extra += row('Status', meta.status);
+          extra += row('Running / Desired', `${meta.running_count} / ${meta.desired_count}`);
+          extra += row('Pending', meta.pending_count);
+          extra += row('Launch type', meta.launch_type);
+          extra += row('Task definition', meta.task_definition ? meta.task_definition.split('/').pop() : '—');
+          break;
+        case 'eks_cluster':
+          extra += row('Status', meta.status);
+          extra += row('K8s version', meta.version);
+          extra += row('Endpoint', meta.endpoint ? '<code>' + meta.endpoint.slice(0, 40) + '…</code>' : '—');
+          extra += row('VPC', meta.vpc_id);
+          break;
+        case 'eks_nodegroup':
+          extra += row('Status', meta.status);
+          extra += row('Capacity type', meta.capacity_type);
+          extra += row('Instance types', (meta.instance_types || []).join(', ') || '—');
+          extra += row('Desired / Min / Max', `${meta.desired_size} / ${meta.min_size} / ${meta.max_size}`);
+          break;
+        case 'rds':
+          extra += row('Engine', `${meta.engine} ${meta.engine_version || ''}`);
+          extra += row('Class', meta.db_instance_class);
+          extra += row('Status', meta.status);
+          extra += row('Endpoint', meta.endpoint_address ? `${meta.endpoint_address}:${meta.endpoint_port}` : '—');
+          extra += row('Multi-AZ', meta.multi_az ? 'yes' : 'no');
+          extra += row('Encrypted', meta.storage_encrypted ? '✓' : '✗ NOT encrypted');
+          extra += row('Public', meta.publicly_accessible ? '⚠ yes' : 'no');
+          extra += row('VPC', meta.vpc_id);
+          break;
+        case 'lambda':
+          extra += row('Runtime', meta.runtime);
+          extra += row('State', meta.state);
+          extra += row('Memory', meta.memory_size ? meta.memory_size + ' MB' : '—');
+          extra += row('Timeout', meta.timeout ? meta.timeout + 's' : '—');
+          extra += row('VPC-bound', meta.vpc_id ? meta.vpc_id : 'no (public)');
+          extra += row('Event sources', (meta.event_source_arns || []).length);
+          break;
+        case 's3':
+          extra += row('Region', meta.region);
+          extra += row('Versioning', meta.versioning_enabled ? '✓ enabled' : 'disabled');
+          extra += row('Public blocked', meta.public_access_blocked ? '✓ yes' : '⚠ NO');
+          extra += row('Encrypted', meta.encryption_enabled ? '✓ yes' : '✗ NO');
+          extra += row('Created', meta.creation_date ? meta.creation_date.slice(0, 10) : '—');
+          break;
+      }
+
+      // Format cost display
+      const costDisplay = d.cost_display || (d.monthly_cost ? `~$${d.monthly_cost.toFixed(0)}/mo` : 'Free');
+      const costStyle = d.monthly_cost > 100 ? 'color:#ef4444;font-weight:600' : (d.monthly_cost > 0 ? 'color:#eab308' : 'color:#22c55e');
+
+      el.innerHTML = `
+        <h3>${escapeHtml(d.label)}</h3>
+        <table class="kv">
+          <tr><th>Kind</th><td>${escapeHtml(d.kind)}</td></tr>
+          <tr><th>Health</th><td>${escapeHtml(d.health)}</td></tr>
+          <tr><th>Orphan</th><td>${d.orphan ? '<b style="color:#dc2626">YES</b>' : 'no'}</td></tr>
+          <tr><th>Est. Cost</th><td style="${costStyle}"><a href="${escapeHtml(d.pricing_url)}" target="_blank" style="color:inherit;text-decoration:underline dotted">${escapeHtml(costDisplay)}</a></td></tr>
+          ${extra}
+          <tr><th>ARN / ID</th><td><code style="font-size:0.7em;word-break:break-all">${escapeHtml(d.id)}</code></td></tr>
+        </table>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+          <a href="${escapeHtml(d.console_url)}" target="_blank" style="font-size:12px">📋 Console</a>
+          ${d.metrics_url ? `<a href="${escapeHtml(d.metrics_url)}" target="_blank" style="font-size:12px">📊 Metrics</a>` : ''}
+          ${d.logs_url ? `<a href="${escapeHtml(d.logs_url)}" target="_blank" style="font-size:12px">📜 Logs</a>` : ''}
+        </div>
+      `;
+    }
+
+    function row(label, value) {
+      if (value === undefined || value === null || value === '') return '';
+      return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(String(value))}</td></tr>`;
+    }
+
+    // Sanitize HTML to prevent XSS
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function renderFixes(fixes) {
+      const ul = document.getElementById('fix-list');
+      if (!fixes || fixes.length === 0) {
+        ul.innerHTML = '<li class="hint healthy">No issues detected.</li>';
+        return;
+      }
+      ul.innerHTML = fixes.map(f => `
+        <li class="fix sev-${escapeHtml(f.severity)}">
+          <strong>${escapeHtml(f.title)}</strong>
+          <p>${escapeHtml(f.detail)}</p>
+          ${f.resource_id ? `<code>${escapeHtml(f.resource_id)}</code>` : ''}
+        </li>
+      `).join('');
+    }
+
+    function updateMeta(meta) {
+      document.getElementById('meta-account').textContent = `account: ${meta.account_id || '—'}`;
+      document.getElementById('meta-region').textContent  = `region: ${meta.region || '—'}`;
+      document.getElementById('meta-vpc').textContent     = `vpc: ${meta.vpc_id || '—'}`;
+      document.getElementById('meta-time').textContent    = `last update: ${new Date().toLocaleTimeString()}`;
+      // Keep dropdown in sync with actual region returned from server
+      if (meta.region) {
+        const sel = document.getElementById('regionSelect');
+        if (![...sel.options].some(o => o.value === meta.region)) {
+          sel.add(new Option(meta.region, meta.region));
+        }
+        sel.value = meta.region;
+      }
+    }
+
+    function activeRegion() {
+      return document.getElementById('regionSelect').value;
+    }
+
+    function showEmptyState(msg) {
+      document.getElementById('empty-state-msg').textContent = msg || 'No resources found in this region.';
+      document.getElementById('empty-state').style.display = 'block';
+    }
+
+    function hideEmptyState() {
+      document.getElementById('empty-state').style.display = 'none';
+    }
+
+    async function fetchGraph() {
+      const region = activeRegion();
+      const qs = `?region=${encodeURIComponent(region)}`;
+      try {
+        const [gRes, dRes] = await Promise.all([
+          fetch(`/graph${qs}`),
+          fetch(`/diagnose${qs}`),
+        ]);
+        if (!gRes.ok) {
+          const err = await gRes.json().catch(() => ({}));
+          showEmptyState(err.error || `Error loading region ${region}`);
+          return;
+        }
+        const graph = await gRes.json();
+        const diag  = await dRes.json();
+        lastGraph = graph;
+
+        const hasNodes = (graph.nodes || []).length > 0;
+        if (!hasNodes) {
+          showEmptyState(`No resources found in ${region}.`);
+          if (cy) { cy.batch(() => cy.elements().remove()); }
+          renderFixes([]);
+          updateMeta({ ...(graph.meta || {}), region });
+          return;
+        }
+        hideEmptyState();
+
+        if (!cy) {
+          buildCy(graph);
+          if (isDarkMode) updateCyTheme(true);
+        } else {
+          replaceElements(graph);
+        }
+        applyOrphanFilter();
+        renderFixes(diag.fixes || []);
+        updateMeta(graph.meta || {});
+      } catch (err) {
+        console.error('fetchGraph failed', err);
+        showEmptyState(`Failed to load ${region} — check network.`);
+      }
+    }
+
+    function replaceElements(graph) {
+      cy.batch(() => {
+        cy.elements().remove();
+        cy.add([...graph.nodes, ...graph.edges]);
+      });
+      cy.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 60, rankSep: 120 }).run();
+      // Re-apply heatmap after refresh
+      const heatmapMode = document.getElementById('heatmapSelect').value;
+      if (heatmapMode !== 'default') {
+        setTimeout(() => applyHeatmap(heatmapMode), 100);
+      }
+    }
+
+    // WebSocket subscription for live updates. The server pushes a JSON
+    // payload that mirrors `/graph` so we can swap elements wholesale.
+    function connectWs() {
+      try {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws`);
+        ws.onmessage = (msg) => {
+          try {
+            const payload = JSON.parse(msg.data);
+            // WS broadcasts are always for the primary (server-startup) region.
+            // Only apply them if the user hasn't switched to a different region.
+            const wsRegion = (payload.graph?.meta?.region) || (payload.diagnosis?.region);
+            if (wsRegion && wsRegion !== activeRegion()) return;
+            if (payload.type === 'graph') {
+              lastGraph = payload.graph;
+              if (!cy) buildCy(payload.graph); else replaceElements(payload.graph);
+              applyOrphanFilter();
+              updateMeta(payload.graph.meta || {});
+            }
+            if (payload.type === 'diagnosis') {
+              renderFixes(payload.diagnosis.fixes || []);
+            }
+          } catch (e) { console.warn(e); }
+        };
+        ws.onclose = () => setTimeout(connectWs, 4000);
+      } catch (e) { /* WebSocket optional */ }
+    }
+
+    // -- Buttons -------------------------------------------------------
+    document.getElementById('refreshBtn').addEventListener('click', fetchGraph);
+    document.getElementById('regionSelect').addEventListener('change', () => {
+      if (cy) { cy.batch(() => cy.elements().remove()); }
+      hideEmptyState();
+      fetchGraph();
+    });
+    document.getElementById('orphansBtn').addEventListener('click', () => {
+      orphanMode = !orphanMode;
+      document.getElementById('orphansBtn').classList.toggle('active', orphanMode);
+      applyOrphanFilter();
+    });
+    document.getElementById('logsBtn').addEventListener('click', () => {
+      // Open CloudWatch Logs for the current region
+      const region = (document.getElementById('meta-region').textContent || '').replace('region: ', '').trim() || 'us-east-1';
+      const logsUrl = `https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:log-groups`;
+      window.open(logsUrl, '_blank');
+    });
+
+    // Auto-refresh every 30s; cheap because the server caches discovery.
+    setInterval(() => {
+      if (document.getElementById('autoRefresh').checked) fetchGraph();
+    }, 30_000);
+
+    // ---------------------------------------------------------------
+    // Traffic Animation System
+    // Draws animated dots flowing along edges to visualize data flow
+    // ---------------------------------------------------------------
+    let trafficEnabled = false;
+    let trafficAnimationId = null;
+    const trafficCanvas = document.getElementById('traffic-canvas');
+    const trafficCtx = trafficCanvas.getContext('2d');
+
+    // Particle class for traffic dots
+    class TrafficParticle {
+      constructor(edge) {
+        this.edge = edge;
+        this.progress = 0;
+        this.speed = 0.008 + Math.random() * 0.006; // Vary speed slightly
+        this.size = 4 + Math.random() * 2;
+        // Color based on edge health
+        const isOrphan = edge.hasClass('orphan');
+        this.color = isOrphan ? '#ef4444' : '#22c55e';
+      }
+
+      update() {
+        this.progress += this.speed;
+        return this.progress < 1;
+      }
+
+      draw(ctx) {
+        const source = this.edge.source();
+        const target = this.edge.target();
+        if (!source || !target) return;
+
+        const sourcePos = source.renderedPosition();
+        const targetPos = target.renderedPosition();
+
+        // Bezier curve to match Cytoscape edge
+        const midX = (sourcePos.x + targetPos.x) / 2;
+        const midY = (sourcePos.y + targetPos.y) / 2 - 20; // Slight curve
+
+        // Quadratic bezier point calculation
+        const t = this.progress;
+        const x = Math.pow(1-t, 2) * sourcePos.x + 2 * (1-t) * t * midX + Math.pow(t, 2) * targetPos.x;
+        const y = Math.pow(1-t, 2) * sourcePos.y + 2 * (1-t) * t * midY + Math.pow(t, 2) * targetPos.y;
+
+        // Draw glowing dot
+        ctx.beginPath();
+        ctx.arc(x, y, this.size, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    let particles = [];
+    let lastSpawnTime = 0;
+
+    function resizeTrafficCanvas() {
+      const cyContainer = document.getElementById('cy');
+      trafficCanvas.width = cyContainer.offsetWidth;
+      trafficCanvas.height = cyContainer.offsetHeight;
+    }
+
+    function spawnParticles() {
+      if (!cy) return;
+      const now = Date.now();
+      if (now - lastSpawnTime < 400) return; // Spawn every 400ms
+      lastSpawnTime = now;
+
+      cy.edges().forEach(edge => {
+        if (!edge.visible()) return;
+        // Random chance to spawn on each edge
+        if (Math.random() < 0.3) {
+          particles.push(new TrafficParticle(edge));
+        }
+      });
+    }
+
+    function animateTraffic() {
+      if (!trafficEnabled) return;
+
+      trafficCtx.clearRect(0, 0, trafficCanvas.width, trafficCanvas.height);
+
+      spawnParticles();
+
+      // Update and draw particles
+      particles = particles.filter(p => {
+        const alive = p.update();
+        if (alive) p.draw(trafficCtx);
+        return alive;
+      });
+
+      trafficAnimationId = requestAnimationFrame(animateTraffic);
+    }
+
+    function toggleTraffic() {
+      trafficEnabled = !trafficEnabled;
+      document.getElementById('trafficBtn').classList.toggle('active', trafficEnabled);
+
+      if (trafficEnabled) {
+        resizeTrafficCanvas();
+        trafficCanvas.style.display = 'block';
+        particles = [];
+        animateTraffic();
+      } else {
+        cancelAnimationFrame(trafficAnimationId);
+        trafficCtx.clearRect(0, 0, trafficCanvas.width, trafficCanvas.height);
+        trafficCanvas.style.display = 'none';
+        particles = [];
+      }
+    }
+
+    document.getElementById('trafficBtn').addEventListener('click', toggleTraffic);
+    window.addEventListener('resize', () => {
+      if (trafficEnabled) resizeTrafficCanvas();
+    });
+
+    // Hide canvas initially
+    trafficCanvas.style.display = 'none';
+
+    // ---------------------------------------------------------------
+    // Heatmap System
+    // Colors nodes based on selected metric: health, orphan risk, etc.
+    // ---------------------------------------------------------------
+    const heatmapColors = {
+      // Health gradient: healthy -> warning -> unhealthy
+      health: {
+        healthy: { bg: '#dcfce7', border: '#22c55e' },    // Green
+        warning: { bg: '#fef3c7', border: '#eab308' },    // Yellow
+        initial: { bg: '#fef3c7', border: '#eab308' },    // Yellow
+        draining: { bg: '#fef3c7', border: '#eab308' },   // Yellow
+        unhealthy: { bg: '#fee2e2', border: '#ef4444' },  // Red
+        unknown: { bg: '#f3f4f6', border: '#6b7280' },    // Gray
+        unused: { bg: '#f3f4f6', border: '#6b7280' },     // Gray
+      },
+      // Orphan risk: safe -> at risk
+      orphan: {
+        safe: { bg: '#dcfce7', border: '#22c55e' },       // Green - not orphan
+        risk: { bg: '#fee2e2', border: '#dc2626' },       // Red - orphan
+      }
+    };
+
+    function applyHeatmap(mode) {
+      if (!cy) return;
+
+      let totalCost = 0;
+
+      cy.nodes().forEach(node => {
+        const data = node.data();
+        let bgColor, borderColor;
+
+        if (mode === 'default') {
+          // Reset to default kind-based colors
+          node.removeClass('heatmap-node');
+          const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+          node.style({
+            'background-color': null,
+            'border-color': null,
+            'color': dark ? '#f8fafc' : '#111827',
+          });
+          return;
+        }
+
+        if (mode === 'health') {
+          const health = (data.health || 'unknown').toLowerCase();
+          const colors = heatmapColors.health[health] || heatmapColors.health.unknown;
+          bgColor = colors.bg;
+          borderColor = colors.border;
+        }
+
+        if (mode === 'orphan') {
+          const isOrphan = data.orphan === true;
+          const colors = isOrphan ? heatmapColors.orphan.risk : heatmapColors.orphan.safe;
+          bgColor = colors.bg;
+          borderColor = colors.border;
+        }
+
+        if (mode === 'cost') {
+          const cost = data.monthly_cost || 0;
+          totalCost += cost;
+
+          if (cost === 0) {
+            bgColor = '#dcfce7'; borderColor = '#22c55e'; // Free - green
+          } else if (cost < 50) {
+            bgColor = '#fef3c7'; borderColor = '#eab308'; // Low - yellow
+          } else if (cost < 200) {
+            bgColor = '#fed7aa'; borderColor = '#f97316'; // Medium - orange
+          } else {
+            bgColor = '#fee2e2'; borderColor = '#ef4444'; // High - red
+          }
+        }
+
+        if (mode === 'security') {
+          if (data.kind === 'security_group') {
+            bgColor = '#fef3c7'; borderColor = '#f59e0b'; // Amber for SGs
+          } else {
+            bgColor = '#f3f4f6'; borderColor = '#9ca3af'; // Dim others
+          }
+        }
+
+        node.addClass('heatmap-node');
+        node.style({
+          'background-color': bgColor,
+          'border-color': borderColor,
+          'border-width': 3,
+          'color': '#111827',
+        });
+      });
+
+      // Update total cost display
+      const totalCostEl = document.getElementById('total-cost');
+      if (mode === 'cost' && totalCostEl) {
+        totalCostEl.textContent = `Est. Total: ~$${totalCost.toFixed(0)}/month`;
+      }
+    }
+
+    document.getElementById('heatmapSelect').addEventListener('change', (e) => {
+      const mode = e.target.value;
+      applyHeatmap(mode);
+      // Update legend visibility
+      document.getElementById('legend-default').style.display = mode === 'default' ? 'block' : 'none';
+      document.getElementById('legend-health').style.display = mode === 'health' ? 'block' : 'none';
+      document.getElementById('legend-orphan').style.display = mode === 'orphan' ? 'block' : 'none';
+      document.getElementById('legend-cost').style.display = mode === 'cost' ? 'block' : 'none';
+    });
+
+    // ---------------------------------------------------------------
+    // Security Group Flow Toggle
+    // ---------------------------------------------------------------
+    let sgFlowEnabled = true;
+
+    function toggleSgFlows() {
+      sgFlowEnabled = !sgFlowEnabled;
+      document.getElementById('sgFlowBtn').classList.toggle('active', sgFlowEnabled);
+      if (!cy) return;
+      cy.edges().forEach(edge => {
+        const relation = edge.data('relation');
+        if (relation === 'allows_ingress' || relation === 'allows_egress') {
+          if (sgFlowEnabled) {
+            edge.removeClass('hidden');
+          } else {
+            edge.addClass('hidden');
+          }
+        }
+      });
+    }
+
+    document.getElementById('sgFlowBtn').addEventListener('click', toggleSgFlows);
+
+    // ---------------------------------------------------------------
+    // Dark/Light Theme Toggle
+    // ---------------------------------------------------------------
+    let isDarkMode = localStorage.getItem('sudiviz-theme') === 'dark';
+
+    function applyTheme(dark) {
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.getElementById('themeBtn').textContent = dark ? '☀️' : '🌙';
+      localStorage.setItem('sudiviz-theme', dark ? 'dark' : 'light');
+
+      // Update Cytoscape node colors if graph exists
+      if (cy) {
+        updateCyTheme(dark);
+      }
+    }
+
+    function updateCyTheme(dark) {
+      const nodeBg = dark ? '#334155' : '#fff';
+      const nodeText = dark ? '#f8fafc' : '#111827';
+      const edgeColor = dark ? '#94a3b8' : '#9ca3af';
+      const edgeLabelColor = dark ? '#e2e8f0' : '#6b7280';
+      const edgeLabelBg = dark ? '#1e293b' : '#ffffff';
+
+      cy.style()
+        .selector('node')
+        .style({
+          'background-color': nodeBg,
+          'color': nodeText,
+        })
+        .selector('edge')
+        .style({
+          'line-color': edgeColor,
+          'target-arrow-color': edgeColor,
+          'color': edgeLabelColor,
+          'text-background-color': edgeLabelBg,
+        })
+        .update();
+
+      // Re-apply kind-specific colors (subtle for dark mode)
+      const kindColors = {
+        alb: dark ? '#1e3a8a' : '#dbeafe',           // Deep blue
+        target_group: dark ? '#164e63' : '#ecfeff',  // Subtle cyan/slate
+        instance: dark ? '#581c87' : '#f5f3ff',      // Deep purple
+        security_group: dark ? '#78350f' : '#fef3c7', // Warm brown/amber (diamond)
+        ecs_cluster: dark ? '#831843' : '#fce7f3',   // Deep pink
+        ecs_service: dark ? '#701a75' : '#fdf4ff',   // Deep fuchsia
+        eks_cluster: dark ? '#1e3a8a' : '#eff6ff',   // Deep blue
+        eks_nodegroup: dark ? '#0c4a6e' : '#e0f2fe', // Deep sky
+        rds: dark ? '#854d0e' : '#fef9c3',           // Deep yellow/amber
+        lambda: dark ? '#14532d' : '#f0fdf4',        // Deep green
+        s3: dark ? '#7c3aed' : '#ede9fe',            // Purple/violet (neutral, distinct)
+      };
+
+      Object.entries(kindColors).forEach(([kind, color]) => {
+        cy.style()
+          .selector(`node.${kind}`)
+          .style({ 'background-color': color })
+          .update();
+      });
+
+      // Re-apply heatmap if active
+      const heatmapMode = document.getElementById('heatmapSelect').value;
+      if (heatmapMode !== 'default') {
+        setTimeout(() => applyHeatmap(heatmapMode), 50);
+      }
+    }
+
+    document.getElementById('themeBtn').addEventListener('click', () => {
+      isDarkMode = !isDarkMode;
+      applyTheme(isDarkMode);
+    });
+
+    // ---------------------------------------------------------------
+    // Cluster Grouping
+    // Groups nodes by service type into collapsible parent containers
+    // ---------------------------------------------------------------
+    let clusterMode = false;
+    let originalGraph = null;
+
+    const clusterConfig = {
+      'Load Balancers': ['alb', 'target_group', 'instance'],
+      'ECS': ['ecs_cluster', 'ecs_service'],
+      'EKS': ['eks_cluster', 'eks_nodegroup'],
+      'Database': ['rds'],
+      'Serverless': ['lambda'],
+      'Storage': ['s3'],
+      'Security': ['security_group'],
+      'Orphans': [] // Special: nodes with orphan=true
+    };
+
+    const clusterColors = {
+      'Load Balancers': { bg: '#1e3a8a', border: '#3b82f6' },
+      'ECS': { bg: '#831843', border: '#ec4899' },
+      'EKS': { bg: '#1e3a8a', border: '#3b82f6' },
+      'Database': { bg: '#854d0e', border: '#eab308' },
+      'Serverless': { bg: '#14532d', border: '#22c55e' },
+      'Storage': { bg: '#581c87', border: '#a855f7' },
+      'Security': { bg: '#78350f', border: '#f59e0b' },
+      'Orphans': { bg: '#7f1d1d', border: '#ef4444' }
+    };
+
+    function getClusterForNode(node) {
+      const data = node.data();
+
+      // Check if orphan first
+      if (data.orphan === true) {
+        return 'Orphans';
+      }
+
+      const kind = data.kind;
+      for (const [cluster, kinds] of Object.entries(clusterConfig)) {
+        if (kinds.includes(kind)) {
+          return cluster;
+        }
+      }
+      return null;
+    }
+
+    function applyClusterGrouping() {
+      if (!cy || !lastGraph) return;
+
+      // Store original for toggle off
+      if (!originalGraph) {
+        originalGraph = JSON.parse(JSON.stringify(lastGraph));
+      }
+
+      // Find which clusters have nodes
+      const activeClusters = new Set();
+      cy.nodes().forEach(node => {
+        const cluster = getClusterForNode(node);
+        if (cluster) activeClusters.add(cluster);
+      });
+
+      // Add parent nodes for each active cluster
+      const parentNodes = [];
+      const dark = isDarkMode;
+
+      activeClusters.forEach(clusterName => {
+        const colors = clusterColors[clusterName];
+        parentNodes.push({
+          group: 'nodes',
+          data: {
+            id: `cluster-${clusterName}`,
+            label: clusterName,
+            isCluster: true
+          },
+          classes: 'cluster-parent'
+        });
+      });
+
+      // Add parent nodes to graph
+      cy.add(parentNodes);
+
+      // Assign children to parents
+      cy.nodes().forEach(node => {
+        if (node.data('isCluster')) return;
+        const cluster = getClusterForNode(node);
+        if (cluster) {
+          node.move({ parent: `cluster-${cluster}` });
+        }
+      });
+
+      // Style cluster parents
+      cy.style()
+        .selector('.cluster-parent')
+        .style({
+          'shape': 'round-rectangle',
+          'background-color': dark ? '#1e293b' : '#f1f5f9',
+          'background-opacity': 0.8,
+          'border-width': 2,
+          'border-color': dark ? '#475569' : '#cbd5e1',
+          'border-style': 'dashed',
+          'label': 'data(label)',
+          'text-valign': 'top',
+          'text-halign': 'center',
+          'text-margin-y': 10,
+          'font-size': 14,
+          'font-weight': 'bold',
+          'color': dark ? '#f8fafc' : '#1f2937',
+          'padding': '30px',
+          'min-width': '200px',
+          'min-height': '100px'
+        })
+        .update();
+
+      // Apply specific cluster colors
+      activeClusters.forEach(clusterName => {
+        const colors = clusterColors[clusterName];
+        cy.style()
+          .selector(`#cluster-${clusterName.replace(/\s+/g, '-')}`)
+          .style({
+            'border-color': colors.border,
+          })
+          .update();
+      });
+
+      // Re-run layout to arrange clusters
+      cy.layout({
+        name: 'dagre',
+        rankDir: 'LR',
+        nodeSep: 40,
+        rankSep: 80,
+        padding: 50
+      }).run();
+    }
+
+    function removeClusterGrouping() {
+      if (!cy) return;
+
+      // Remove all cluster parent nodes
+      cy.nodes('.cluster-parent').remove();
+
+      // Move all nodes back to root
+      cy.nodes().forEach(node => {
+        if (!node.data('isCluster')) {
+          node.move({ parent: null });
+        }
+      });
+
+      // Re-run layout
+      cy.layout({
+        name: 'dagre',
+        rankDir: 'LR',
+        nodeSep: 60,
+        rankSep: 120
+      }).run();
+    }
+
+    function toggleClusterMode() {
+      clusterMode = !clusterMode;
+      document.getElementById('clusterBtn').classList.toggle('active', clusterMode);
+
+      if (clusterMode) {
+        applyClusterGrouping();
+      } else {
+        removeClusterGrouping();
+      }
+    }
+
+    document.getElementById('clusterBtn').addEventListener('click', toggleClusterMode);
+
+    // ---------------------------------------------------------------
+    // Sidebar Drawer Toggle
+    // ---------------------------------------------------------------
+    const sidebarToggleBtn = document.getElementById('sidebar-toggle');
+    let sidebarOpen = localStorage.getItem('sudiviz-sidebar') === 'open';
+
+    function applySidebarState(open) {
+      const sidebar = document.getElementById('sidebar');
+      sidebar.classList.toggle('collapsed', !open);
+      sidebarToggleBtn.textContent = open ? '›' : '‹';
+      sidebarToggleBtn.title = open ? 'Collapse panel' : 'Expand panel';
+      sidebarToggleBtn.style.right = open ? '360px' : '0px';
+      localStorage.setItem('sudiviz-sidebar', open ? 'open' : 'closed');
+    }
+
+    sidebarToggleBtn.addEventListener('click', () => {
+      sidebarOpen = !sidebarOpen;
+      applySidebarState(sidebarOpen);
+    });
+
+    applySidebarState(sidebarOpen);
+
+    // Apply saved theme on load
+    applyTheme(isDarkMode);
+
+    fetchGraph();
+    connectWs();
+  </script>
+</body>
+</html>
